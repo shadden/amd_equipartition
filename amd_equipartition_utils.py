@@ -5,7 +5,8 @@ from celmech.nbody_simulation_utilities import align_simulation
 from celmech.secular import LaplaceLagrangeSystem
 from celmech.miscellaneous import critical_relative_AMD
 from sympy import S
-def get_samples(n):
+# The old, bad way of doing this
+def old_get_samples(n):
     """
     Generate a sample from joint distribution
     of n uniform random variables between
@@ -19,6 +20,17 @@ def get_samples(n):
         u-= x[i]
     x[n-1]=u
     return np.random.permutation(x)
+
+def get_samples(n):
+    """
+    Generate a sample from joint distribution
+    of n uniform random variables between
+    0 and 1 subject to the constraint that
+    their sum is equl to 1.
+    """
+    x = np.random.uniform(0,1,size=n)
+    x /= np.sum(x)
+    return x
 
 def generate_simulations(masses,semimajor_axes,N,fcrit=1):
     """

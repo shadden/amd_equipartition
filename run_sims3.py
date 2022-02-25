@@ -4,17 +4,18 @@ from amd_equipartition_utils import run_secular_system_simulation, generate_simu
 from celmech.secular import SecularSystemSimulation
 import sys
 
-Nsims = 50
-Tfin = 2e8*np.pi
-Nout = 2048
+Nsims = 10
+Tfin = 2e9*np.pi # 1Gyr
+Nout = 8192
+Npl = 5
 Idelta = int(sys.argv[1])
 Ndelta = int(sys.argv[2])
 
 deltas = np.linspace(0.3,1,Ndelta)
 delta = deltas[Idelta]
-masses = 3e-5 * np.ones(4)
-semimajor_axes = (1+delta)**np.arange(4)
-sims = generate_simulations(masses,semimajor_axes,Nsims)
+masses = 3e-5 * np.ones(Npl)
+semimajor_axes = (1+delta)**np.arange(Npl)
+sims = generate_simulations(masses,semimajor_axes,Nsims,fcrit=1.)
 times = np.linspace(0,Tfin,Nout)
 for i,sim in enumerate(sims):
     sec_sim = SecularSystemSimulation.from_Simulation(
@@ -25,6 +26,6 @@ for i,sim in enumerate(sims):
     )
     sec_sim._integrator.atol = 1e-10 * np.sqrt(sec_sim.calculate_AMD())
     results = run_secular_system_simulation(sec_sim,times)
-    finame = "secular_integration_{}_delta_{}_of_{}.pkl".format(i,Idelta+1,Ndelta)
+    finame = "./results/runs3/si3_{}_delta_{}_of_{}.pkl".format(i,Idelta+1,Ndelta)
     with open(finame,"wb") as fi:
         pickle.dump(results,fi)

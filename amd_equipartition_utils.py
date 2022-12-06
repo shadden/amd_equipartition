@@ -7,12 +7,6 @@ from celmech.miscellaneous import critical_relative_AMD
 from sympy import S
 # The old, bad way of doing this
 def old_get_samples(n):
-    """
-    Generate a sample from joint distribution
-    of n uniform random variables between
-    0 and 1 subject to the constraint that
-    their sum is equl to 1.
-    """
     x = np.zeros(n)
     u = 1
     for i in range(n-1):
@@ -21,16 +15,25 @@ def old_get_samples(n):
     x[n-1]=u
     return np.random.permutation(x)
 
+# another way of doing it wrong dammit!
+def old2_get_samples(n):
+    x = np.random.uniform(0,1,size=n)
+    x /= np.sum(x)
+    return x
+
 def get_samples(n):
     """
     Generate a sample from joint distribution
     of n uniform random variables between
     0 and 1 subject to the constraint that
-    their sum is equl to 1.
+    their sum is equal to 1.
     """
     x = np.random.uniform(0,1,size=n)
-    x /= np.sum(x)
-    return x
+    xs = np.sort(x)
+    y = np.zeros(n)
+    y[:n-1] = xs[1:] - xs[:-1]
+    y[n-1] = 1 - xs[-1]
+    return y
 
 def generate_simulations(masses,semimajor_axes,N,fcrit=1):
     """

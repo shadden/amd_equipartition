@@ -3,7 +3,7 @@ import rebound as rb
 from celmech import Poincare
 from celmech.nbody_simulation_utilities import align_simulation
 from celmech.secular import LaplaceLagrangeSystem
-from celmech.miscellaneous import critical_relative_AMD
+from celmech.miscellaneous import critical_relative_AMD, AMD_stability_coefficients
 from sympy import S
 # The old, bad way of doing this
 def old_get_samples(n):
@@ -28,18 +28,37 @@ def get_samples(n):
     0 and 1 subject to the constraint that
     their sum is equal to 1.
     """
-    x = np.random.uniform(0,1,size=n)
+    # put down n-1 random "fence posts"
+    x = np.random.uniform(0,1,size=n-1)
     xs = np.sort(x)
     y = np.zeros(n)
-    y[:n-1] = xs[1:] - xs[:-1]
-    y[n-1] = 1 - xs[-1]
+    y[0] = xs[0]
+    y[1:n-1] = xs[1:] - xs[:-1]
+    y[-1] = 1 - xs[-1]
     return y
 
 def generate_simulations(masses,semimajor_axes,N,fcrit=1):
     """
-    Generate N rebound simulations with specified planet
-    masses and semi-major axes and AMD values set to 
-    ``fcrit`` times the critical value of AMD for stability.
+    Generate multiple rebound N-body simulations with fixed masses, semi-major
+    axes and total AMD. The total AMD is set to a fixed fraction of the critical
+    AMD and distributed randomly among the secular modes of the system.
+
+    Parameters
+    ----------
+    masses : array-like
+        List of planet masses.
+    semimajor_axes : array-like
+        List of planet semi-major axes.
+    N : int
+        Number of randomized systems to generate
+    fcrit : int, optional
+        Set the total AMD of the system as a fraction of the total AMD.
+        `fcrit`=1 by default.
+
+    Returns
+    -------
+    list
+        A list of randomly generated rebound simulations.
     """
     # set up initial simulation
     sim0 = rb.Simulation()

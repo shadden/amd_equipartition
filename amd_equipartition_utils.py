@@ -2,9 +2,9 @@ import numpy as np
 import rebound as rb
 from celmech import Poincare
 from celmech.nbody_simulation_utilities import align_simulation
-from celmech.secular import LaplaceLagrangeSystem
+from celmech.secular import LaplaceLagrangeSystem, SecularSystemSimulation
 from celmech.miscellaneous import critical_relative_AMD, AMD_stability_coefficients
-from sympy import S
+from sympy import S,Poly
 # The old, bad way of doing this
 def old_get_samples(n):
     x = np.zeros(n)
@@ -129,3 +129,156 @@ def run_secular_system_simulation(sec_sim,times):
     soln["AMD"] = amd
     soln["qp"] = qp_solution
     return soln
+
+def _remove_indices_from_tuple(original_tuple, indices_to_remove):
+    return tuple(item for idx, item in enumerate(original_tuple) if idx not in indices_to_remove)
+
+def _are_parallel(vector1, vector2):
+    # Ensure vectors are non-empty and of the same length
+    if len(vector1) != len(vector2):
+        return False
+
+    # Initialize a variable to store the ratio
+    ratio = None
+
+    for a, b in zip(vector1, vector2):
+        # If both components are zero, continue to the next component
+        if a == 0 and b == 0:
+            continue
+
+        # If one component is zero but the other is not, vectors are not parallel
+        if a == 0 or b == 0:
+            return False
+
+        # Calculate the current ratio
+        current_ratio = a / b
+
+        # If the ratio has not been set yet, set it
+        if ratio is None:
+            ratio = current_ratio
+
+        # If the current ratio does not match the previous, vectors are not parallel
+        elif ratio != current_ratio:
+            return False
+
+    return True
+def _normalize_positive(arr):
+    # Find the first non-zero element
+    nonzero_elements = arr[arr != 0]
+
+    if nonzero_elements.size == 0:
+        # If all elements are zero, return the original array
+        return arr
+
+    # Get the sign of the first non-zero element
+    sign = np.sign(nonzero_elements[0])
+
+    # Multiply the array by this sign
+    return arr * sign
+
+from celmech.poisson_series_manipulate import PSTerm, PoissonSeries
+from collections import defaultdict
+def keyval_to_psterm(key,val,Npl):
+    Ndof = 2*Npl-1
+    kkbar = np.array(key,dtype=int)
+    term = PSTerm(val,kkbar[:Ndof],kkbar[Ndof:],[],[])
+    return term
+
+def simulation_to_secular_poisson_series(sim):
+    """
+    Given an input `rebound.Simulation` object, construct `PoissonSeries`
+    objects that capture the secular Hamiltonian of the system.
+
+    Parameters
+    ----------
+    sim : rebound.Simulation
+        Target simulation for which to compute secular Hamiltonian.
+
+    Returns
+    -------
+    series_sec: PoissonSeries
+        Poisson Series representing the integrable part of the secular
+        Hamiltonian
+    series_res: dict
+        Dictionary containing the resonant terms appearing in the Hamiltonian
+        for different wave vectors.
+        
+    """
+    sec_sim = SecularSystemSimulation.from_Simulation(sim,dtFraction=0.1)
+    Hpoly = sec_sim.Hamiltonian_as_polynomial(transformed=True)
+    T_ecc, T_inc, D_ecc, D_inc = sec_sim.diagonalizing_tranformations()
+    # identify inclinatinon mode with freq. zero
+    zero_mode_index = np.argmin(np.diagonal(D_inc))
+    Ndof = 2*sec_sim.Npl
+    Npl = sec_sim.Npl
+    gens = Hpoly.gens
+    # substitute 0 amplitude for modes w/ frequency
+    zero_mode_gens = gens[Npl+zero_mode_index],gens[Ndof+Npl+zero_mode_index]
+
+    # new polynomial with 0-freq inclination mode removed
+    new_poly = Hpoly.subs(dict(zip(zero_mode_gens,np.zeros(2))))
+    new_gens = _remove_indices_from_tuple(gens,[Npl+zero_mode_index,Ndof+Npl+zero_mode_index])
+    new_poly = Poly(new_poly,new_gens)
+    Hdict = new_poly.as_dict()
+
+    terms_sec = []
+    terms_res = defaultdict(list)
+    kvecs = []
+    for key,val in Hdict.items():        
+        kkbar = np.array(key,dtype=int)
+        k,kbar = kkbar[:Ndof-1],kkbar[Ndof-1:]
+        kres = k-kbar
+        gcd = np.gcd.reduce(kres)
+        term = keyval_to_psterm(key,val,Npl)
+        if gcd==0:
+            terms_sec.append(term)
+        else:
+            kres = _normalize_positive(kres // gcd)
+            for kres0 in kvecs:
+                if _are_parallel(kres,kres0):
+                    terms_res[tuple(kres)].append(term)
+                    break
+            else:
+                terms_res[tuple(kres)] = [term]
+                kvecs.append(kres)
+    series_res = dict()
+    for key,val in terms_res.items():
+        series_res[key] = PoissonSeries.from_PSTerms(val,Ndof-1,0,cvar_symbols=new_gens)
+    series_sec = PoissonSeries.from_PSTerms(terms_sec,cvar_symbols=new_gens)
+    return series_sec, series_res
+
+def H0_series_to_omega_Domega(H0):
+    r"""
+    Given a Poisson series for the integrable part of a Hamiltonian written as
+
+    .. math::
+        H_0 \approx \omega \cdot J + \frac{1}{2} J^\mathrm{T}\cdot \Delta\omega \cdot J
+    
+    return the vector :math:`\omega` and matrix :math:`\Delta\omega`.
+
+    Parameters
+    ----------
+    H0 : PoissonSeries
+        Poisson series representing integrable part of the Hamiltonian
+
+    Returns
+    -------
+    omega, Domega
+        ndarrays representing frequency vector and curvature matrix
+    """
+    omega = np.zeros(H0.N)
+    Domega = np.zeros((H0.N,H0.N))
+    for term in H0.terms:
+        imax = np.argmax(term.k)
+        order = np.sum(term.k)
+        if order==1:
+            omega[imax] = term.C
+        elif order==2:
+            if term.k[imax]==2:
+                Domega[imax,imax] = term.C
+            else:
+                j = 1 + imax + np.argmax(term.k[imax+1:])
+                Domega[imax,j]= 0.5 * term.C
+                Domega[j,imax]= 0.5 * term.C
+                continue
+    return omega, Domega
